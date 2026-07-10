@@ -1,0 +1,443 @@
+---
+title: "Final Project - 414 - Wine data"
+author: "Syed Sarim Ahmed - 261924324, Muhammad Aoun - 261904044, Bilal - 271052798, Saba Ali - 261943226"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(factoextra)
+library(corrplot)
+
+set.seed(42)
+```
+
+# **Abstract**
+
+#### This project applies unsupervised statistical learning techniques to the UCI Wine dataset to explore whether wines can be grouped based solely on their chemical characteristics. Principal Component Analysis (PCA) is used for dimensionality reduction and visualization, while K-means and hierarchical clustering are applied to identify natural groupings in the data. Model selection is performed using the elbow method, and clustering results are evaluated by comparing discovered clusters with known wine cultivars using confusion tables and the Adjusted Rand Index. The results show that unsupervised methods are able to recover the underlying structure in the data, revealing clear groupings that correspond closely to the three wine cultivars.
+
+# **Introduction**
+
+#### Statistical learning methods are widely used to discover structure and patterns in multivariate data. In many real-world applications, labeled responses are unavailable, making unsupervised learning techniques essential for exploratory analysis. These methods allow researchers to uncover hidden groupings, reduce dimensionality, and understand relationships among variables without prior knowledge of class labels.
+
+#### In this project, unsupervised learning techniques are applied to a real-world chemical analysis dataset of wines from the same region in Italy. The wines are derived from three distinct grape cultivars, and each sample is described by thirteen chemical measurements (such as alcohol content, malic acid, color intensity, and proline). Although the true wine types are known in the dataset, they are treated as unknown during model training and only used later for evaluation.
+
+### **Research question:**
+#### Can unsupervised statistical learning methods identify natural groupings of wines based solely on their chemical characteristics, and how well do these groupings correspond to the known wine cultivars?
+
+
+#### To answer this question, we will use Principal Component Analysis (PCA) for dimensionality reduction and visualization, followed by K-means clustering and hierarchical clustering to identify and compare wine groups.
+
+
+```{r}
+# Load the wine.data file (no headers)
+wine <- read.csv("C:\\Users\\GS\\Desktop\\7th semester\\wine\\wine.data", header = FALSE)
+
+# Assign proper column names
+names(wine) <- c(
+  "Type",
+  "Alcohol",
+  "Malic_Acid",
+  "Ash",
+  "Alcalinity_of_Ash",
+  "Magnesium",
+  "Total_Phenols",
+  "Flavanoids",
+  "Nonflavanoid_Phenols",
+  "Proanthocyanins",
+  "Color_Intensity",
+  "Hue",
+  "OD280_OD315",
+  "Proline"
+)
+
+# Basic structure
+dim(wine)       # number of rows and columns
+str(wine)       # variable types
+summary(wine)   # summary statistics
+table(wine$Type) # count of each wine cultivar
+
+# Check for missing values
+colSums(is.na(wine))
+```
+# **Data Description**
+
+#### The dataset used in this project is the UCI Wine dataset, which contains the results of chemical analyses performed on wines grown in the same region of Italy but derived from three different grape cultivars. After loading and assigning descriptive column names, the dataset consists of 178 observations and 14 variables, where:
+
+#### 1 variable (Type) represents the true wine cultivar (1, 2, or 3),
+
+#### 13 variables represent chemical measurements such as alcohol content, acidity levels, phenolic compounds, color intensity, and proline concentration.
+
+#### The structure of the dataset (str) confirms that the chemical attributes are numeric, while the cultivar label is stored as an integer. A summary of the chemical variables indicates substantial variation across wines. For example:
+
+#### The distribution of wine types is slightly imbalanced, with 59 samples of Type 1, 71 samples of Type 2, and 48 samples of Type 3, as shown by the frequency table.
+
+#### A missing-value check confirms that there are no missing entries in any variable (colSums(is.na(wine)) = 0 for all columns). This ensures that the dataset can be used directly for PCA and clustering without the need for imputation or data cleaning.
+
+## **EDA - Exploratory Data Analysis**
+
+### Histograms for all chemical variables
+```{r}
+wine %>%
+  select(-Type) %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "Variable", 
+               values_to = "Value") %>%
+  ggplot(aes(x = Value)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "black") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histograms of Wine Chemical Features")
+```
+
+### Boxplots to identify skewness/outliers more clearly
+```{r}
+wine %>%
+  select(-Type) %>%
+  pivot_longer(cols = everything(),
+               names_to = "Variable",
+               values_to = "Value") %>%
+  ggplot(aes(y = Value, x = Variable)) +
+  geom_boxplot(fill = "tomato", alpha = 0.6) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Boxplots of Wine Chemical Features")
+```
+### Correlation martrix
+```{r}
+library(knitr)
+corr_matrix <- round(cor(wine[, -1]), 3)
+
+knitr::kable(corr_matrix, 
+             caption = "Correlation Matrix of Wine Chemical Features")
+```
+
+#### To better understand the characteristics of the wine dataset, several exploratory analyses were conducted, including visualization of distributions, identification of outliers, and examination of correlations among variables.
+
+### **Distribution of Chemical Features**
+
+#### -  Histograms of the 13 chemical variables reveal that many features are not normally distributed:
+
+#### - Proline, Color_Intensity, and Malic_Acid exhibit noticeable right skewness, with long tails toward higher values.
+
+#### - Alcalinity_of_Ash also shows moderate right skewness.
+
+#### - Variables such as Alcohol, Ash, Magnesium, Total_Phenols, Flavanoids, and Hue appear more symmetrically distributed.
+
+#### - Boxplots further highlight the presence of significant outliers in several variables. In particular:
+
+#### - Magnesium contains a few high-value outliers.
+
+#### - Proline displays a very large spread, ranging from approximately 300 to 1700.
+
+#### - Color_Intensity shows a wide range with upper long-tailed values.
+
+#### These observations indicate that the dataset contains variables measured on different scales and with varying degrees of skewness, making data standardization essential before applying PCA or clustering.
+
+### **Correlation Analysis**
+
+#### A correlation matrix was computed for all chemical variables (excluding the Type label). Several strong relationships were observed:
+
+### **Strong positive correlations:**
+
+#### - Total_Phenols and Flavanoids (0.865)
+
+#### - Flavanoids and OD280_OD315 (0.787)
+
+#### - Total_Phenols and OD280_OD315 (0.700)
+
+#### - Proanthocyanins and Flavanoids (0.653)
+
+#### - Alcohol and Proline (0.644)
+
+#### - Color_Intensity and Alcohol (0.546)
+
+#### These strong associations indicate that many polyphenol-related features (Flavanoids, OD280_OD315, Total_Phenols, Proanthocyanins) tend to increase together, reflecting underlying chemical composition patterns.
+
+### **Strong negative correlations:**
+
+#### - Hue and Color_Intensity (-0.522)
+
+#### - Nonflavanoid_Phenols and OD280_OD315 (-0.503)
+
+#### - Malic_Acid and Hue (-0.561)
+
+#### These negative relationships suggest contrasting chemical characteristics across wine types—for example, wines with deeper color intensity tend to have lower hue values.
+
+### **Implications for Modeling:**
+
+### **The presence of:**
+
+#### - Strong correlations
+
+#### - High variance across features
+
+#### - Outliers
+
+#### - Different measurement scales
+
+#### Motivates the use of Principal Component Analysis (PCA) to reduce dimensionality and reveal dominant patterns in the data. Similarly, K-means and hierarchical clustering should be applied on standardized data to avoid giving undue influence to variables with large ranges such as Proline and Color_Intensity.
+
+# **Methodology**
+
+```{r}
+# Extract feature matrix
+X <- as.matrix(wine[, -1])   # numerical variables only
+y <- wine$Type               # true labels
+
+# Compute column means and standard deviations (before scaling)
+colMeans(X)
+apply(X, 2, sd)
+
+# Standardize variables: mean = 0, sd = 1
+X.scaled <- scale(X)
+
+# Verify scaling
+round(apply(X.scaled, 2, mean), 4)
+round(apply(X.scaled, 2, sd), 4)
+```
+#### Before applying PCA and clustering, the chemical variables were examined and found to be on very different numerical scales. For example, Proline values are in the hundreds, while several phenolic measurements are below 1. Because PCA and distance-based clustering are both sensitive to variable scale, features with larger ranges would dominate the analysis and distort the results. To prevent this, all variables were standardized using scale() so that each has mean 0 and standard deviation 1. The verification step confirms that the scaled data meet these conditions, ensuring that all chemical features contribute equally to PCA and clustering.
+
+```{r}
+# Run PCA on standardized data
+pca <- prcomp(X.scaled, center = FALSE, scale. = FALSE)
+
+# Summary of PCA
+summary(pca)
+
+# Proportion of Variance Explained (PVE)
+sdev <- pca$sdev
+pve <- sdev^2 / sum(sdev^2)
+round(pve, 4)
+
+# Cumulative PVE
+cum_pve <- cumsum(pve)
+round(cum_pve, 4)
+
+# PCA Output
+round(pve[1]*100,1)
+round(pve[2]*100,1)
+```
+
+## **Scree Plot**
+```{r}
+plot(pve, type = "b", pch = 19,
+     xlab = "Principal Component",
+     ylab = "Proportion of Variance Explained",
+     main = "Scree Plot (PVE)")
+```
+## **Biplot**
+```{r}
+biplot(pca, scale = 0, cex = 0.7,
+       xlabs = rep("", nrow(X.scaled)),
+       main = "PCA Biplot")
+```
+## **PCA Scatter Plot**
+```{r}
+# Extract PC1 and PC2 scores
+scores <- pca$x[, 1:2]
+
+# Colors for wine types
+colors <- c("red", "blue", "darkgreen")
+
+plot(scores[,1], scores[,2],
+     col = colors[y], pch = 19,
+     xlab = "PC1", ylab = "PC2",
+     main = "PCA: PC1 vs PC2 (True Wine Types)")
+legend("topright", legend = c("Type 1", "Type 2", "Type 3"),
+       pch = 19, col = colors)
+```
+
+#### The scatter plot of PC1 vs PC2 shows that the wines form three partially separated clusters in PCA space, suggesting that the chemical composition contains enough structure for unsupervised clustering methods to identify meaningful groups.
+
+## **Elbow Plot**
+```{r}
+# Elbow Method
+wss <- numeric(10)
+for (k in 1:10) {
+  km.temp <- kmeans(X.scaled, centers = k, nstart = 20)
+  wss[k] <- km.temp$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of Clusters (k)",
+     ylab = "Total Within-Cluster SS",
+     main = "Elbow Method for Choosing k")
+```
+## **K-means Clustering
+```{r}
+set.seed(123)
+km <- kmeans(X.scaled, centers = 3, nstart = 50)
+
+# Cluster sizes and table vs true labels
+km$size
+table(km$cluster, y)
+```
+
+## **K-means Cluster Plot (in PCA space)**
+```{r}
+plot(scores[,1], scores[,2],
+     col = km$cluster,
+     pch = km$cluster + 14,
+     xlab = "PC1", ylab = "PC2",
+     main = "K-means Clusters on PCA Space")
+
+legend("topright", legend = paste("Cluster", 1:3),
+       pch = 15:17, col = 1:3)
+```
+## **Hierarchical Clustering (complete linkage)**
+```{r}
+# Distance matrix
+d <- dist(X.scaled)
+
+# Hierarchical clustering
+hc <- hclust(d, method = "complete")
+
+plot(hc, main = "Hierarchical Clustering Dendrogram",
+     xlab = "", ylab = "Height")
+```
+## **Cut dendrogram into 3 clusters**
+```{r}
+hc.groups <- cutree(hc, k = 3)
+
+table(hc.groups, y)
+```
+
+# **Results and Model Evaluation**
+
+## **1. PCA Results**
+
+#### Principal Component Analysis was applied to the standardized chemical features.
+#### The first two components explain a substantial amount of variance:
+
+#### - PC1: 36.2% of the variance
+
+#### - PC2: 19.2% of the variance
+
+#### - Cumulative (PC1 + PC2): 55.4%
+
+#### This indicates that the first two principal components capture more than half of all chemical variation in the dataset.
+
+### **PCA Scatter Plot (True Labels)**
+
+#### The PCA scatter plot shows three clearly separated clusters, corresponding closely to wine Types 1, 2, and 3.
+#### This suggests that the chemical variables naturally separate the wines even without labels.
+
+## **2. Choosing k for K-means (Elbow Method)**
+
+#### The elbow plot shows a clear “bend” at:
+
+#### ➤ k = 3
+
+##### This matches the true number of wine cultivars, confirming that three clusters best represent the underlying structure.
+
+## **K-Means Clustering Results**
+
+#### After selecting k = 3 using the elbow method, K-means clustering was applied to the standardized chemical features.
+
+### **Cluster Sizes**
+```{r}
+km$size
+```
+#### This indicates that K-means formed three clusters of relatively balanced sizes
+
+### **K-means Confusion Matrix (Predicted Clusters vs True Wine Types)**
+```{r}
+km_table <- table(km$cluster, y)
+km_table
+```
+#### K-means successfully discovers three distinct groups, and although the numerical cluster labels do not match the wine type numbers directly (which is expected), the overall grouping pattern aligns well with the true underlying classes:
+
+#### - Cluster 1 corresponds mainly to Type 3
+
+#### - Cluster 2 corresponds mainly to Type 1
+
+#### - Cluster 3 corresponds mainly to Type 2
+
+#### The clustering captures the general structure, with only a small number of cross-cluster assignments.
+
+## **Hierarchical Clustering Results**
+
+#### Hierarchical clustering using complete linkage was performed on the standardized distance matrix. Cutting the dendrogram at k = 3 produces the following grouping:
+
+```{r}
+hc_table <- table(hc.groups, y)
+hc_table
+```
+
+### Hierarchical clustering also identifies three coherent groups:
+
+#### - Cluster 1 predominantly represents Type 1
+
+#### - Cluster 2 predominantly represents Type 2
+
+#### - Cluster 3 corresponds strongly to Type 3
+
+#### Compared with K-means, hierarchical clustering achieves better separation, especially for Types 1 and 2, resulting in fewer misclassified samples.
+#### This consistency across clusters suggests that the underlying chemical variation naturally supports a three-group structure.
+
+## **Comparing Clustering Methods**
+
+#### Both approaches—K-means and hierarchical clustering—recover the general type structure of the wine dataset, but with differing accuracy.
+
+### **Comparison Summary**
+
+#### - **K-means**
+
+#### - Produces three well-defined clusters
+
+#### - Sometimes misassigns observations near class boundaries
+
+#### - Captures the overall structure but has more cross-membership
+
+#### - **Hierarchical Clustering**
+
+#### - Produces cleaner separation between types
+
+#### - Fewer misclassifications, especially for Types 1 and 2
+
+#### - More stable grouping due to the hierarchical nature of the method
+
+#### **Overall Performance**
+
+#### **Hierarchical clustering** performs slightly better than **K-means** in matching the true class structure.
+#### This is consistent with PCA visualizations, which show clear separation between wine types, particularly in the first two principal components.
+
+# **Discussion of Insights**
+## **Key Findings from Unsupervised Learning**
+#### The core finding is the remarkable effectiveness of unsupervised statistical learning in recovering the inherent structure of the wine data. By using only the 13 chemical features, both K-means and Hierarchical Clustering successfully identified three distinct groups, which aligns perfectly with the known number of wine cultivars.
+
+## **Principal Component Analysis (PCA) Insights**
+#### The PCA was a critical initial step, reducing the 13-dimensional data into a two-dimensional space that retained 55.4% of the total variance. The PCA scatter plot visually confirmed the underlying three-group structure, demonstrating that the chemical composition alone is sufficient to separate the cultivars.
+#### PC1 (36.2% variance) appears to primarily differentiate Type 1 and Type 3 wines from Type 2 wines, suggesting a strong chemical contrast based on factors like Proline and Alcohol (positively correlated with PC1), and Flavanoids and OD280_OD315 (negatively correlated with PC1, see biplot).
+#### PC2 (19.2% variance) further separates Type 1 from Type 3.
+
+## **Clustering Performance and Feature Influence**
+#### The confusion tables confirmed that both clustering models closely match the true cultivars. Hierarchical clustering demonstrated a slightly cleaner separation, especially between Types 1 and 2, resulting in fewer overall misclassifications than K-means.
+#### The necessity of data standardization was evident: the large range of values for variables like Proline (ranging from 300 to 1700) would have improperly dominated the distance metrics used in clustering had the data not been scaled. The success of the clustering methods confirms that, once standardized, all chemical features contribute equitably to defining the groups.
+
+# **Conclusion and Limitations**
+## **Conclusion**
+#### The research question, "Can unsupervised statistical learning methods identify natural groupings of wines based solely on their chemical characteristics, and how well do these groupings correspond to the known wine cultivars?" is answered with a strong affirmative. Unsupervised methods, specifically K-means and Hierarchical Clustering applied to standardized chemical data, successfully identified three distinct clusters that align closely with the three true wine cultivars (Types 1, 2, and 3). The high degree of alignment, quantified by the confusion matrices, demonstrates that the underlying chemical composition is the dominant factor defining these wine groups.
+
+# **Limitations**
+
+#### **Dependency on Data Scale**: The success of the clustering was highly dependent on the initial standardization of the data. Without scaling, features with large ranges (like Proline) would have heavily skewed the results, a limitation inherent to distance-based clustering.
+
+#### **Model Selection**: The determination of the optimal number of clusters, k=3, relied on the Elbow Method, which can sometimes be ambiguous. While the result aligned with the known answer, in a truly unsupervised scenario, alternative metrics would be necessary for a more robust k selection.
+
+#### **Generalizability**: The analysis is restricted to the UCI Wine dataset, which consists of wines from a single region in Italy. Applying these models to wines from different regions or with different chemical measurement techniques may require recalibration.
+
+# **Appendices**
+#### **Data Source**:
+#### The data used for this project is the UCI Wine dataset.
+#### Original Source: UCI Machine Learning Repository
+#### Data Link: https://archive.ics.uci.edu/ml/machine-learning-databases/wine/wine.data
+
+
+
